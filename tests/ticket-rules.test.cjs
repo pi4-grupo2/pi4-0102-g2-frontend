@@ -60,7 +60,7 @@ test('non-TI sees status and read actions, but no edit/delete controls or edit m
   assert.match(row, /App.viewTicket/);
   assert.doesNotMatch(row, /App.editTicket|App.confirmDeleteTicket/);
   assert.equal(app.run(`renderTicketModal(tickets[0])`), '');
-  assert.match(app.run(`renderTicketModal()`), /ticketDepartment/);
+  assert.doesNotMatch(app.run(`renderTicketModal()`), /ticketDepartment|ticketTechnician/);
   app.run(`CURRENT_USER.department = 'TI'`);
   assert.match(app.run(`renderTicketRow(tickets[0])`), /App.editTicket/);
 });

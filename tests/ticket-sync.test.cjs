@@ -138,10 +138,10 @@ test('department column follows title in both tables and uses requester rather t
   assert.match(run(`renderTicketDetail(tickets[0])`), /Adriana<\/span>\s*<small[^>]*>Marketing<\/small>/);
 });
 
-test('creation department selector excludes legacy and test departments without editing users', () => {
+test('editing department selector excludes legacy and test departments without editing users', () => {
   const { run } = application();
   run(`USERS.push(...['SI', 'Sistemas de Informação', 'teste', 'tst'].map((department, i) => ({id: 10 + i, name: 'Pessoa', department})))`);
-  const html = run(`renderTicketModal()`);
+  const html = run(`renderTicketModal(tickets[0])`);
   const select = html.match(/id="ticketDepartment">([\s\S]*?)<\/select>/)[1];
   assert.doesNotMatch(select, /value="(?:SI|Sistemas de Informação|teste|tst)"/);
   assert.match(select, /value="Marketing"/);
@@ -258,17 +258,22 @@ test('resolved view removes reopened tickets and refreshes its counter when retu
   assert.equal(node('sidebarResolvedCount').textContent, 0);
 });
 
-test('nominating an assignee in creation keeps the displayed status NEW', async () => {
-  const { run, node, events } = application();
+test('creation omits assignment fields and submits no assignee even if stale controls exist', async () => {
+  const { run, node } = application();
   await run(`App.init()`);
-  const form = { querySelector: selector => node(selector.slice(1)) };
-  const assignee = node('ticketTechnician');
-  assignee.value = '3'; assignee.closest = () => form;
-  node('ticketStatus').disabled = true;
-  node('ticketStatus').value = 'NEW';
-  events.change({ target: assignee });
-  assert.equal(node('ticketStatus').value, 'NEW');
-  assert.match(run(`renderTicketModal()`), /O chamado começa Em aberto/);
+  const html = run('renderTicketModal()');
+  assert.doesNotMatch(html, /ticketDepartment|ticketTechnician/);
+  assert.match(html, /Vinicius — TI/);
+  assert.match(html, /O chamado começa Em aberto/);
+  node('ticketTitle').value = 'Falha na máquina';
+  node('ticketDescription').value = 'A máquina não inicia';
+  node('ticketCategory').value = '1';
+  node('ticketTechnician').value = '3';
+  node('ticketDepartment').value = 'TI';
+  run(`Api.createTicket = async payload => { window.createdPayload = payload; return {id: 31}; };`);
+  await run('App.saveTicket()');
+  assert.equal(run(`'supportId' in window.createdPayload`), false);
+  assert.equal(run('window.createdPayload.title'), 'Falha na máquina');
 });
 
 test('only entering TI detail starts NEW service and repeated opening does not repeat the operation', async () => {
