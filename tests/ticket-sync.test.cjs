@@ -140,14 +140,14 @@ async function resolvedApplication(department = 'TI') {
   return app;
 }
 
-test('resolved menu and route show TI all resolved tickets and an accurate counter', async () => {
+test('resolved route shows TI all resolved tickets without a sidebar entry', async () => {
   const { run, node } = await resolvedApplication();
   const html = node('pageContent').innerHTML;
   assert.match(html, /<h1[^>]*>Resolvidos<\/h1>/);
   assert.match(html, /data-ticket-id="20"/);
   assert.match(html, /data-ticket-id="21"/);
   assert.doesNotMatch(html, /data-ticket-id="22"|data-ticket-id="23"/);
-  assert.match(run(`renderSidebar()`), /data-route="resolvidos" href="#resolvidos"/);
+  assert.doesNotMatch(run(`renderSidebar()`), /data-route="resolvidos"|sidebarResolvedCount/);
   assert.equal(node('sidebarResolvedCount').textContent, 2);
   assert.equal(node('filterStatus').value, 'CLOSED');
 });
@@ -158,7 +158,7 @@ test('non-TI ADMIN only sees department resolved tickets even when API fixture c
   assert.match(html, /data-ticket-id="20"/);
   assert.doesNotMatch(html, /data-ticket-id="21"|data-ticket-id="22"|data-ticket-id="23"/);
   assert.equal(node('sidebarResolvedCount').textContent, 1);
-  assert.match(run(`renderSidebar()`), /id="sidebarResolvedCount">1</);
+  assert.doesNotMatch(run(`renderSidebar()`), /data-route="resolvidos"|sidebarResolvedCount/);
 });
 
 test('resolved filters cannot expose open tickets and remain separate from the main list', async () => {
