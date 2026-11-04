@@ -20,9 +20,11 @@ function application() {
   const routes = {};
   const events = {};
   const timers = [];
+  const storage = new Map();
   const context = vm.createContext({
     console, URLSearchParams, setInterval: (handler, delay) => { timers.push({ handler, delay }); },
-    localStorage: { getItem: () => 'test-token' },
+    localStorage: { getItem: key => key === 'token' ? 'test-token' : storage.get(key) || null,
+      setItem: (key, value) => storage.set(key, value) },
     window: {},
     document: { body: { style: {} }, visibilityState: 'visible', addEventListener: (name, callback) => { events[name] = callback; }, querySelectorAll: () => [], querySelector: () => null, getElementById: node },
     ThemeManager: { init() {}, isDark: () => false },
@@ -54,6 +56,77 @@ function application() {
     USERS = ${JSON.stringify(users)}; tickets = [${JSON.stringify(ticket)}];`);
   return { run, requests, routes, events, timers, toasts, node, failRequests: handler => { requestFailure = handler; }, server: patch => { ticket = { ...ticket, ...patch }; } };
 }
+
+test('TI receives one alert for each new external-sector ticket and excludes TI requests', async () => {
+  const { run, toasts } = application();
+  await run('App.init()');
+  assert.equal(toasts.length, 0);
+  run(`window.fixture = [...tickets,
+    {id: 31, title: 'Impressora parada', clientDepartment: 'Produção', status: 'NEW'},
+    {id: 32, title: 'Pedido interno', clientId: 2, status: 'NEW'}];
+    Api.fetchTickets = async () => window.fixture;`);
+  await run('reloadTickets()');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0][1], 'Chamado aberto (Produção)');
+  assert.match(toasts[0][2], /Impressora parada/);
+  assert.equal(run('getUnreadNotificationsCount()'), 1);
+  await run('reloadTickets()');
+  assert.equal(toasts.length, 1);
+  assert.match(run('renderNotificationsList()'), /data-chamado-id="31"/);
+});
+
+test('local TI alerts survive reload and marking read never calls the backend for a local ID', async () => {
+  const { run, requests } = application();
+  await run('App.init()');
+  run(`Api.fetchTickets = async () => [...tickets, {id: 31, title: 'Falha', clientId: 1}];`);
+  await run('reloadTickets()');
+  await run(`markNotificationAsRead('ticket-opened:31')`);
+  run('ticketAlertsUser = null; syncTicketAlerts(false)');
+  assert.equal(run('getVisibleNotifications().length'), 1);
+  assert.equal(run('getUnreadNotificationsCount()'), 0);
+  assert.equal(requests.some(r => r.url.includes('ticket-opened')), false);
+});
+
+test('sector accounts receive no TI opening alerts, even for their own new requests', async () => {
+  const { run, toasts } = application();
+  run(`CURRENT_USER = {id: 1, department: 'Marketing'};`);
+  await run('App.init()');
+  run(`Api.fetchTickets = async () => [...tickets, {id: 31, title: 'Falha', clientId: 1}];`);
+  await run('reloadTickets()');
+  assert.equal(toasts.length, 0);
+  assert.equal(run('getUnreadNotificationsCount()'), 0);
+});
+
+test('backend copies of opening alerts are deduplicated and ticket text is escaped', async () => {
+  const { run } = application();
+  await run('App.init()');
+  run(`tickets.push({id: 31, title: '<img src=x onerror=alert(1)>', clientId: 1});
+    syncTicketAlerts();
+    notifications = [{id: 8, ticketId: 31, type: 'chamado_novo'},
+      {id: 9, ticketId: 20, type: 'status_alterado'}];`);
+  assert.equal(run('getVisibleNotifications().length'), 2);
+  assert.doesNotMatch(run('renderNotificationsList()'), /<img/);
+  assert.match(run('renderNotificationsList()'), /&lt;img/);
+  await run('markAllNotificationsAsRead()');
+  assert.equal(run('getUnreadNotificationsCount()'), 0);
+});
+
+test('notification sound is unlocked by interaction and only played for TI', async () => {
+  const { run, events } = application();
+  await run('App.init()');
+  run(`window.tones = 0;
+    window.AudioContext = class {
+      constructor() { this.state = 'suspended'; this.currentTime = 0; }
+      async resume() { this.state = 'running'; }
+      createOscillator() { return {frequency: {}, connect() {}, start() { window.tones++; }, stop() {}}; }
+      createGain() { return {gain: {setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}}, connect() {}}; }
+    };`);
+  await events.pointerdown();
+  run(`App.notifyNewTickets([{title: 'Chamado aberto (Produção)', message: 'Falha'}])`);
+  assert.equal(run('window.tones'), 2);
+  run(`CURRENT_USER.department = 'Produção'; App.notifyNewTickets([{title: 'Teste', message: 'Teste'}])`);
+  assert.equal(run('window.tones'), 2);
+});
 
 test('department column follows title in both tables and uses requester rather than assignee sector', () => {
   const { run } = application();
