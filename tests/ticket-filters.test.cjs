@@ -7,10 +7,13 @@ const vm = require('node:vm');
 function application() {
   let route = 'chamados';
   const nodes = new Map();
-  for (const id of ['pageContent', 'filterTechnician', 'filterDepartment', 'filterDate', 'filterStatus', 'filterPriority', 'filterCategory', 'btnClearFilters']) {
+  const timers = new Set();
+  for (const id of ['pageContent', 'searchTickets', 'filterTechnician', 'filterDepartment', 'filterDate', 'filterStatus', 'filterPriority', 'filterCategory', 'btnClearFilters']) {
     nodes.set(id, { value: '', innerHTML: '', listeners: {}, addEventListener(event, handler) { this.listeners[event] = handler; } });
   }
   const context = vm.createContext({
+    setTimeout: handler => { timers.add(handler); return handler; },
+    clearTimeout: handler => timers.delete(handler),
     document: { addEventListener() {}, querySelector: () => null, getElementById: id => nodes.get(id) || null },
     Router: { getCurrentRoute: () => route }
   });
@@ -28,11 +31,12 @@ function application() {
       {id: 11, title: 'Compra B', clientId: 4, supportId: '1', createdAt: '2026-11-05T09:00:00', status: 'NEW', categoryId: 1, priority: 'LOW'},
       {id: 12, title: 'Venda C', clientId: 3, supportId: 2, createdAt: '2026-11-04T18:00:00', status: 'NEW', categoryId: 1, priority: 'HIGH'},
       {id: 13, title: 'Venda D', clientId: 3, supportId: 3, createdAt: 'invalid', status: 'NEW', categoryId: 1, priority: 'LOW'}
-    ]; App.renderLiveViews();`);
+    ]; tickets.forEach(ticket => { ticket.description = ''; }); App.renderLiveViews();`);
   return {
     run, nodes,
+    flushSearch() { for (const handler of timers) handler(); timers.clear(); },
     change(id, value) { const node = nodes.get(id); node.value = value; node.listeners.change(); },
-    ids() { return [...nodes.get('pageContent').innerHTML.matchAll(/onclick="App.viewTicket\((\d+)\)/g)].map(match => Number(match[1])).sort(); },
+    ids() { return [...(nodes.get('ticketListResults') || nodes.get('pageContent')).innerHTML.matchAll(/onclick="App.viewTicket\((\d+)\)/g)].map(match => Number(match[1])).sort(); },
     navigate(value) { route = value; run('App.renderLiveViews()'); }
   };
 }
@@ -93,4 +97,55 @@ test('filters preserve department access restrictions', () => {
   assert.deepEqual(app.ids(), []);
   app.change('filterTechnician', '1');
   assert.deepEqual(app.ids(), []);
+});
+
+
+test('live updates and debounced search preserve the mounted toolbar and typed selection', () => {
+  const app = application();
+  const page = app.nodes.get('pageContent');
+  let pageWrites = 0;
+  Object.defineProperty(page, 'innerHTML', { get: () => '', set: () => { pageWrites++; } });
+  let markup = '';
+  let resultWrites = 0;
+  const results = {};
+  Object.defineProperty(results, 'innerHTML', {
+    get: () => markup,
+    // Simulate browser normalization of generated markup.
+    set: value => { resultWrites++; markup = value.replaceAll('/>', '></svg>'); }
+  });
+  app.nodes.set('ticketListResults', results);
+  const input = app.nodes.get('searchTickets');
+  input.value = 'Venda';
+  input.selectionStart = 2;
+  input.selectionEnd = 4;
+  input.listeners.input();
+  app.run("tickets[0].priority = 'LOW'; App.renderLiveViews()");
+  assert.equal(pageWrites, 0);
+  assert.equal(app.nodes.get('searchTickets'), input);
+  assert.equal(input.value, 'Venda');
+  assert.equal(input.selectionStart, 2);
+  assert.equal(input.selectionEnd, 4);
+  app.flushSearch();
+  assert.deepEqual(app.ids(), [10, 12, 13]);
+  const writes = resultWrites;
+  app.run('App.renderLiveViews()');
+  assert.equal(resultWrites, writes);
+  assert.equal(pageWrites, 0);
+  assert.equal(input.value, 'Venda');
+});
+
+test('partial results support empty searches and clearing the mounted controls', () => {
+  const app = application();
+  app.nodes.set('ticketListResults', { innerHTML: '' });
+  app.change('filterPriority', 'HIGH');
+  const input = app.nodes.get('searchTickets');
+  input.value = 'inexistente';
+  input.listeners.input();
+  app.flushSearch();
+  assert.deepEqual(app.ids(), []);
+  assert.match(app.nodes.get('ticketListResults').innerHTML, /table-empty/);
+  app.nodes.get('btnClearFilters').listeners.click();
+  assert.equal(input.value, '');
+  assert.equal(app.nodes.get('filterPriority').value, '');
+  assert.deepEqual(app.ids(), [10, 11, 12, 13]);
 });
