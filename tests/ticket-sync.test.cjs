@@ -26,7 +26,7 @@ function application() {
     localStorage: { getItem: key => key === 'token' ? 'test-token' : storage.get(key) || null,
       setItem: (key, value) => storage.set(key, value) },
     window: {},
-    document: { body: { style: {} }, visibilityState: 'visible', addEventListener: (name, callback) => { events[name] = callback; }, querySelectorAll: () => [], querySelector: () => null, getElementById: node },
+    document: { body: { style: {} }, visibilityState: 'visible', addEventListener: (name, callback) => { events[name] = callback; }, querySelectorAll: () => [], querySelector: () => null, getElementById: id => id === 'ticketListResults' ? null : node(id) },
     ThemeManager: { init() {}, isDark: () => false },
     Router: { register: (name, handler) => { routes[name] = handler; }, init() {}, resolve() {}, getCurrentRoute: () => 'chamados' },
     fetch: async (url, options) => {
@@ -315,14 +315,14 @@ test('TI viewing resolved tickets cannot restart them', async () => {
   assert.equal(run(`tickets[0].status`), 'CLOSED');
 });
 
-test('visible requester list periodically synchronizes service started in the TI account', async () => {
-  const { run, server, timers, node, requests } = application();
+test('returning requester list synchronizes service started in TI without periodic polling', async () => {
+  const { run, server, timers, events, node, requests } = application();
   server({ status: 'NEW' });
   await run(`App.init()`);
   run(`CURRENT_USER = { id: 1, name: 'Adriana', department: 'Marketing' }`);
   server({ status: 'ASSIGNED', supportId: 2 });
-  assert.equal(timers[0].delay, 15000);
-  await timers[0].handler();
+  assert.equal(timers.length, 0);
+  await events.visibilitychange();
   assert.match(node('pageContent').innerHTML, /Em atendimento/);
   assert.equal(run(`getDashboardStats().assigned`), 1);
   assert.equal(requests.filter(request => request.method === 'POST').length, 0);
