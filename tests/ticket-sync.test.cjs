@@ -349,3 +349,42 @@ test('resolution saved before a refresh failure is not reported as a failed writ
   assert.equal(toasts.at(-1)[0], 'warning');
   assert.equal(toasts.at(-1)[1], 'Alteração salva');
 });
+
+test('a confirmed write and socket burst serialize reads and discard the stale snapshot', async () => {
+  const { run } = application();
+  run(`
+    window.reads = 0;
+    window.active = 0;
+    window.peak = 0;
+    window.started = new Promise(resolve => { window.signalStart = resolve; });
+    window.gate = new Promise(resolve => { window.release = resolve; });
+    Api.fetchTickets = async () => {
+      const first = ++window.reads === 1;
+      window.peak = Math.max(window.peak, ++window.active);
+      if (first) {
+        window.signalStart();
+        await window.gate;
+      } else {
+        window.statusBeforeRetry = tickets[0].status;
+      }
+      window.active--;
+      return [{...tickets[0], status: first ? 'NEW' : 'CLOSED'}];
+    };
+    window.first = reloadTickets();
+  `);
+  await run('window.started');
+  const done = run(`Promise.all([
+    window.first, App.quickStatusChange(20, 'CLOSED'),
+    App.handleTicketUpdated({action:'UPDATED',ticketId:20}),
+    App.handleTicketUpdated({action:'UPDATED',ticketId:20})
+  ])`);
+  // Wait until the PUT response has been processed while the old GET is outstanding.
+  for (let i = 0; i < 100 && run('tickets[0].status') !== 'CLOSED'; i++) await Promise.resolve();
+  assert.equal(run('tickets[0].status'), 'CLOSED');
+  run('window.release()');
+  await done;
+  assert.equal(run('window.peak'), 1);
+  assert.equal(run('window.reads'), 2);
+  assert.equal(run('window.statusBeforeRetry'), 'CLOSED');
+  assert.equal(run('tickets[0].status'), 'CLOSED');
+});
