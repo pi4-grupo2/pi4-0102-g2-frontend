@@ -57,21 +57,24 @@ function application() {
   return { run, requests, routes, events, timers, toasts, node, failRequests: handler => { requestFailure = handler; }, server: patch => { ticket = { ...ticket, ...patch }; } };
 }
 
-test('TI receives one alert for each new external-sector ticket and excludes TI requests', async () => {
-  const { run, toasts } = application();
+test('TI receives one opening alert per ticket, including TI requests seen through the socket and a subsequent refresh', async () => {
+  const { run, toasts, node } = application();
   await run('App.init()');
+  node('notificationsBtn').insertAdjacentHTML = () => {};
   assert.equal(toasts.length, 0);
   run(`window.fixture = [...tickets,
     {id: 31, title: 'Impressora parada', clientDepartment: 'Produção', status: 'NEW'},
     {id: 32, title: 'Pedido interno', clientId: 2, status: 'NEW'}];
     Api.fetchTickets = async () => window.fixture;`);
-  await run('reloadTickets()');
-  assert.equal(toasts.length, 1);
+  await run("App.handleTicketUpdated({action:'CREATED',ticketId:32})");
+  assert.equal(toasts.length, 2);
   assert.equal(toasts[0][1], 'Chamado aberto (Produção)');
   assert.match(toasts[0][2], /Impressora parada/);
-  assert.equal(run('getUnreadNotificationsCount()'), 1);
+  assert.equal(toasts[1][1], 'Chamado aberto (TI)');
+  assert.match(toasts[1][2], /Pedido interno/);
+  assert.equal(run('getUnreadNotificationsCount()'), 2);
   await run('reloadTickets()');
-  assert.equal(toasts.length, 1);
+  assert.equal(toasts.length, 2);
   assert.match(run('renderNotificationsList()'), /data-chamado-id="31"/);
 });
 
@@ -109,6 +112,36 @@ test('backend copies of opening alerts are deduplicated and ticket text is escap
   assert.match(run('renderNotificationsList()'), /&lt;img/);
   await run('markAllNotificationsAsRead()');
   assert.equal(run('getUnreadNotificationsCount()'), 0);
+});
+
+test('TI sees an API opening notification for an internal ticket present at login', async () => {
+  const { run, server, toasts } = application();
+  server({clientId: 3});
+  run("Api.fetchNotifications = async () => [{id: 8, ticketId: 20, type: 'chamado_novo'}]");
+  await run('App.init()');
+  assert.equal(run('getUnreadNotificationsCount()'), 1);
+  assert.equal(toasts.length, 0);
+});
+
+test('socket bursts show visible creations and updates using synchronized titles', async () => {
+  const { run, toasts } = application();
+  run("CURRENT_USER = {id: 1, department: 'Marketing'}");
+  await run('App.init()');
+  run(`Api.fetchTickets = async () => [
+    {id: 20, clientId: 1, title: 'A < B'}, {id: 21, clientId: 1, title: 'Visível'},
+    {id: 22, clientId: 3, title: 'Outro setor'}
+  ]`);
+  await run(`Promise.all([
+    App.handleTicketUpdated({action:'CREATED',ticketId:20}),
+    App.handleTicketUpdated({action:'UPDATED',ticketId:21}),
+    App.handleTicketUpdated({action:'UPDATED',ticketId:21}),
+    App.handleTicketUpdated({action:'UPDATED',ticketId:22}),
+    App.handleTicketUpdated({action:'UPDATED',ticketId:23})
+  ])`);
+  assert.deepEqual(toasts, [
+    ['info', 'Chamado criado', '#20 — A &lt; B'],
+    ['info', 'Chamado atualizado', '#21 — Visível']
+  ]);
 });
 
 test('notification sound is unlocked by interaction and only played for TI', async () => {
