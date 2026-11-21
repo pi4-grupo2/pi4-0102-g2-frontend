@@ -77,7 +77,11 @@ test('socket refresh reads complete tickets and renders detail without starting 
     Router: { getCurrentRoute: () => 'chamado/20', resolve: () => assert.fail('Não deve reabrir a rota') },
     tickets: [], notifications: [], getUnreadNotificationsCount: () => 0,
     getDashboardStats: () => ({closed:0}), getVisibleTickets: () => [],
-    canViewTicket: () => true,
+    canViewTicket: () => true, i18n: {t: key => key}, escapeHtml: value => value,
+    showToast: (_type, title, message) => {
+      assert.equal(title, 'ticketUpdated');
+      assert.equal(message, '#20 — Atualizado pela API');
+    },
     renderTicketDetail: ticket => ticket ? ticket.title : 'Sem acesso',
     reloadTickets: async () => {
       reads++;
