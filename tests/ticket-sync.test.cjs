@@ -144,6 +144,20 @@ test('socket bursts show visible creations and updates using synchronized titles
   ]);
 });
 
+test('socket DELETED event reloads tickets and shows deletion toast', async () => {
+  const { run, toasts } = application();
+  await run('App.init()');
+  run(`CURRENT_USER = { id: 1, department: 'TI' };
+    USERS = [CURRENT_USER];
+    tickets = [{id: 30, clientId: 1, title: 'Chamado a excluir'}];
+    Api.fetchTickets = async () => [];`);
+  await run(`App.handleTicketUpdated({action:'DELETED',ticketId:30})`);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0][0], 'info');
+  assert.equal(toasts[0][1], 'Chamado Excluído');
+  assert.match(toasts[0][2], /#0030/);
+});
+
 test('notification sound is unlocked by interaction and only played for TI', async () => {
   const { run, events } = application();
   await run('App.init()');
